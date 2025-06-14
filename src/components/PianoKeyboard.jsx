@@ -13,7 +13,7 @@ import {
   BLACK_KEYS,
   NUM_WHITE_KEYS,
   COMPUTER_KEY_TO_NOTE,
-} from '../utils/keys';
+} from '../utils/Keys';
 
 // --- Constants ---
 const BLACK_KEY_WIDTH_RATIO = 0.65;
