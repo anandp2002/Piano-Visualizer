@@ -222,7 +222,6 @@ const PianoKeyboard = () => {
             note.visualBarElement.style.height = `${
               note.currentDuration * NOTE_RISE_SPEED_PPS
             }px`;
-            // *** NEW: Update duration text on every frame ***
             if (note.durationElement) {
               note.durationElement.textContent = `${note.currentDuration.toFixed(
                 2
@@ -321,7 +320,7 @@ const PianoKeyboard = () => {
           endTime: null,
           element: null,
           visualBarElement: null,
-          durationElement: null, // *** NEW: Add ref for duration text ***
+          durationElement: null,
           left: left,
           width: isBlackKey ? blackKeyWidth : whiteKeyWidth,
           color: isBlackKey ? '#8b5cf6' : '#3b82f6',
@@ -736,7 +735,6 @@ const PianoKeyboard = () => {
                   lineHeight: 1.1,
                 }}
               >
-                {/* *** NEW: Display note name and duration for free play *** */}
                 <span className="text-white font-bold text-sm">
                   {note.noteName}
                 </span>
@@ -772,7 +770,10 @@ const PianoKeyboard = () => {
               height: `${KEYBOARD_HEIGHT}px`,
             }}
           >
-            {key.note}
+            <div className="flex flex-col items-center leading-tight">
+              <span>{key.note.slice(0, -1)}</span>
+              <span className="text-xs">{key.note.slice(-1)}</span>
+            </div>
           </button>
         ))}
         {/* Black Keys */}
@@ -782,7 +783,7 @@ const PianoKeyboard = () => {
             onMouseDown={() => handleNoteOn(key)}
             onMouseUp={() => handleNoteOff(key)}
             onMouseLeave={() => handleNoteOff(key)}
-            className={`absolute top-0 rounded-b-md h-40 border border-t-0 border-gray-800 text-white flex items-end justify-center pb-2 font-semibold transition-all duration-75 ease-in-out z-10 ${getKeyClasses(
+            className={`absolute top-0 rounded-b-md h-40 border border-t-0 border-gray-800 text-white flex items-end justify-center pb-2 transition-all duration-75 ease-in-out z-10 ${getKeyClasses(
               key
             )}`}
             style={{
@@ -793,7 +794,10 @@ const PianoKeyboard = () => {
               transform: 'translateX(-50%)',
             }}
           >
-            {key.note}
+            <div className="flex flex-col items-center leading-tight">
+              <span>{key.note.slice(0, -1)}</span>
+              <span className="text-xs">{key.note.slice(-1)}</span>
+            </div>
           </button>
         ))}
       </div>
