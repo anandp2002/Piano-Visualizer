@@ -83,6 +83,7 @@ const PianoKeyboard = () => {
   const lastTimestamp = useRef(0);
   const waitingNotes = useRef([]);
   const prePauseGameState = useRef('idle');
+  const isHoldingCorrectChord = useRef(false);
 
   // --- Measure container and calculate responsive key sizes ---
   const { width: containerWidth } = useResizeObserver(keyboardContainerRef);
@@ -145,21 +146,11 @@ const PianoKeyboard = () => {
         practiceMode === 'assisted' &&
         (gameState === 'playing' || gameState === 'waitingForInput')
       ) {
-        if (gameState === 'playing') {
+        if (
+          gameState === 'playing' ||
+          (gameState === 'waitingForInput' && isHoldingCorrectChord.current)
+        ) {
           songTime.current += delta;
-        }
-
-        if (gameState === 'waitingForInput') {
-          const currentTime = performance.now();
-          activelyHeldAssistedNotes.current.forEach((heldNote) => {
-            if (
-              heldNote.status === 'holding' &&
-              (currentTime - heldNote.pressStartTime) / 1000 >=
-                heldNote.duration
-            ) {
-              heldNote.status = 'hit'; // Mark as successfully held
-            }
-          });
         }
 
         const elapsedTimeS = songTime.current;
@@ -191,8 +182,12 @@ const PianoKeyboard = () => {
                 (elapsedTimeS - note.time) * NOTE_FALL_SPEED_PPS +
                 ANIMATION_AREA_HEIGHT;
               note.y = y;
+
               const noteTopY = y - noteHeight;
-              if (noteTopY >= ANIMATION_AREA_HEIGHT) {
+              if (
+                noteTopY >= ANIMATION_AREA_HEIGHT &&
+                note.status === 'upcoming'
+              ) {
                 note.status = 'finished';
               } else {
                 notesToDisplay.push(note);
@@ -200,12 +195,33 @@ const PianoKeyboard = () => {
             }
           });
         }
+
+        if (
+          gameState === 'waitingForInput' &&
+          isHoldingCorrectChord.current &&
+          waitingNotes.current.length > 0
+        ) {
+          const firstWaitingNote = waitingNotes.current[0];
+          const noteHeight = firstWaitingNote.duration * NOTE_FALL_SPEED_PPS;
+          const noteTopY = firstWaitingNote.y - noteHeight;
+
+          if (noteTopY >= ANIMATION_AREA_HEIGHT) {
+            waitingNotes.current.forEach((note) => {
+              note.status = 'finished';
+              setScore((s) => ({ ...s, hits: s.hits + 1 }));
+            });
+            waitingNotes.current = [];
+            isHoldingCorrectChord.current = false;
+            setGameState('playing');
+          }
+        }
+
         setVisualSongNotes(notesToDisplay);
 
         if (
           upcomingNotes.length === 0 &&
           waitingNotes.current.length === 0 &&
-          notesToDisplay.length === 0
+          notesToDisplay.filter((n) => n.status !== 'finished').length === 0
         ) {
           setGameState('finished');
         }
@@ -287,20 +303,29 @@ const PianoKeyboard = () => {
       setPressedKeys((prev) => new Set(prev).add(keyData.note));
 
       if (practiceMode === 'assisted') {
-        if (gameState !== 'playing' && gameState !== 'waitingForInput') return;
+        if (gameState !== 'waitingForInput') return;
 
         const waitingNote = waitingNotes.current.find(
-          (n) => n.name === keyData.note && n.status === 'waiting'
+          (n) =>
+            n.name === keyData.note &&
+            (n.status === 'waiting' || n.status === 'holding')
         );
 
-        if (waitingNote) {
+        if (waitingNote && waitingNote.status === 'waiting') {
           waitingNote.status = 'holding';
-          waitingNote.pressStartTime = performance.now();
           activelyHeldAssistedNotes.current.set(keyData.note, waitingNote);
           addKeyFeedback(keyData.note, 'hit');
+
+          const allRequiredNotesHeld = waitingNotes.current.every((note) =>
+            activelyHeldAssistedNotes.current.has(note.name)
+          );
+
+          if (allRequiredNotesHeld) {
+            isHoldingCorrectChord.current = true;
+          }
         } else if (
-          gameState === 'waitingForInput' &&
-          !activelyHeldAssistedNotes.current.has(keyData.note)
+          !activelyHeldAssistedNotes.current.has(keyData.note) &&
+          !isHoldingCorrectChord.current
         ) {
           setScore((s) => ({ ...s, mistakes: s.mistakes + 1 }));
           addKeyFeedback(keyData.note, 'mistake');
@@ -349,25 +374,17 @@ const PianoKeyboard = () => {
           const heldNoteData = activelyHeldAssistedNotes.current.get(
             keyData.note
           );
-          activelyHeldAssistedNotes.current.delete(keyData.note);
 
-          if (heldNoteData.status === 'hit') {
-            setScore((s) => ({ ...s, hits: s.hits + 1 }));
-            waitingNotes.current = waitingNotes.current.filter(
-              (n) => n.id !== heldNoteData.id
-            );
-            if (
-              waitingNotes.current.length === 0 &&
-              gameState === 'waitingForInput'
-            ) {
-              setGameState('playing');
-            }
-          } else if (heldNoteData.status === 'holding') {
+          if (isHoldingCorrectChord.current) {
+            isHoldingCorrectChord.current = false;
+            waitingNotes.current.forEach((note) => {
+              addKeyFeedback(note.name, 'mistake');
+            });
             setScore((s) => ({ ...s, mistakes: s.mistakes + 1 }));
-            addKeyFeedback(keyData.note, 'mistake');
-            heldNoteData.status = 'waiting';
-            delete heldNoteData.pressStartTime;
           }
+
+          heldNoteData.status = 'waiting';
+          activelyHeldAssistedNotes.current.delete(keyData.note);
         }
       } else if (practiceMode === 'free') {
         const now = performance.now();
@@ -455,6 +472,7 @@ const PianoKeyboard = () => {
     lastTimestamp.current = 0;
     waitingNotes.current = [];
     prePauseGameState.current = 'idle';
+    isHoldingCorrectChord.current = false;
   };
 
   const handleFileChange = async (e) => {
@@ -495,6 +513,10 @@ const PianoKeyboard = () => {
     lastTimestamp.current = performance.now();
   };
 
+  const handleRestart = () => {
+    startAssistedPractice();
+  };
+
   const handlePlayControls = () => {
     if (gameState === 'playing' || gameState === 'waitingForInput') {
       prePauseGameState.current = gameState;
@@ -526,12 +548,22 @@ const PianoKeyboard = () => {
   };
 
   // --- Dynamic Styling ---
-  const getNoteColor = (status, keyType) => {
-    if (status === 'hit') return '#10b981'; // Green
-    if (status === 'waiting' || status === 'holding') return '#facc15'; // Yellow
+  // MODIFICATION: Update getNoteColor to handle the "consuming" state
+  const getNoteColor = (note, keyType) => {
+    if (
+      gameState === 'waitingForInput' &&
+      isHoldingCorrectChord.current &&
+      (note.status === 'waiting' || note.status === 'holding')
+    ) {
+      return '#10b981'; // Green for consuming
+    }
+    if (note.status === 'hit') return '#10b981'; // Green
+    if (note.status === 'waiting' || note.status === 'holding')
+      return '#facc15'; // Yellow
     return keyType === 'black' ? '#8b5cf6' : '#3b82f6'; // Purple / Blue
   };
 
+  // MODIFICATION: Update getKeyClasses to handle the "consuming" state
   const getKeyClasses = (key) => {
     const isWaiting =
       gameState === 'waitingForInput' &&
@@ -541,11 +573,14 @@ const PianoKeyboard = () => {
           (n.status === 'waiting' || n.status === 'holding')
       );
 
+    const isConsuming = isWaiting && isHoldingCorrectChord.current;
+
     const feedback = keyFeedback.get(key.note);
     const isPressed = pressedKeys.has(key.note);
     const pressedClass =
       key.type === 'white' ? 'translate-y-1 shadow-inner' : 'h-[9.8rem]';
 
+    if (isConsuming) return `bg-green-400 ${pressedClass}`;
     if (isWaiting) return `bg-yellow-400 animate-pulse ${pressedClass}`;
     if (feedback === 'hit') return `bg-green-300 ${pressedClass}`;
     if (feedback === 'mistake') return `bg-red-300 ${pressedClass}`;
@@ -566,7 +601,7 @@ const PianoKeyboard = () => {
     >
       {/* --- Controls Header --- */}
       <div className="flex justify-between items-center mb-4 text-white">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={switchToFreePlay}
             className={`px-4 py-2 rounded text-sm font-bold transition-colors ${
@@ -593,16 +628,24 @@ const PianoKeyboard = () => {
             />
           </label>
           {practiceMode === 'assisted' && rawSongNotes && (
-            <button
-              onClick={handlePlayControls}
-              className={`px-4 py-2 rounded text-sm font-bold transition-colors w-28 ${
-                gameState === 'playing' || gameState === 'waitingForInput'
-                  ? 'bg-yellow-600 hover:bg-yellow-500'
-                  : 'bg-green-600 hover:bg-green-500'
-              }`}
-            >
-              {getPlayButtonText()}
-            </button>
+            <>
+              <button
+                onClick={handlePlayControls}
+                className={`px-4 py-2 rounded text-sm font-bold transition-colors w-28 ${
+                  gameState === 'playing' || gameState === 'waitingForInput'
+                    ? 'bg-yellow-600 hover:bg-yellow-500'
+                    : 'bg-green-600 hover:bg-green-500'
+                }`}
+              >
+                {getPlayButtonText()}
+              </button>
+              <button
+                onClick={handleRestart}
+                className="px-4 py-2 rounded text-sm font-bold transition-colors bg-red-600 hover:bg-red-500"
+              >
+                Restart
+              </button>
+            </>
           )}
         </div>
         {practiceMode === 'assisted' && rawSongNotes && (
@@ -658,8 +701,9 @@ const PianoKeyboard = () => {
         {practiceMode === 'assisted' &&
           visualSongNotes.map((note) => {
             const keyData = KEYS.find((k) => k.note === note.name);
-            if (!keyData) return null;
-            const color = getNoteColor(note.status, keyData.type);
+            if (!keyData || note.status === 'finished') return null;
+            // MODIFICATION: Pass the entire note object to getNoteColor
+            const color = getNoteColor(note, keyData.type);
             const height = note.duration * NOTE_FALL_SPEED_PPS;
             return (
               <div
@@ -671,13 +715,14 @@ const PianoKeyboard = () => {
                   height: `${height}px`,
                   top: 0,
                   transform: `translateY(${note.y - height}px)`,
-                  opacity: note.status === 'finished' ? 0 : 1,
                   zIndex: keyData.type === 'black' ? 2 : 1,
                 }}
               >
                 <div
                   className={`w-full h-full rounded-md shadow-lg flex flex-col justify-start items-center p-1 ${
-                    note.status === 'waiting' || note.status === 'holding'
+                    // MODIFICATION: Stop pulsing when consuming
+                    (note.status === 'waiting' || note.status === 'holding') &&
+                    !isHoldingCorrectChord.current
                       ? 'animate-pulse'
                       : ''
                   }`}
@@ -724,7 +769,7 @@ const PianoKeyboard = () => {
                     activeFreePlayNotes.current.get(note.id).visualBarElement =
                       el;
                 }}
-                className="absolute bottom-0 w-full rounded-md shadow-lg flex flex-col justify-start items-center p-1"
+                className="absolute bottom-0 w-full rounded-md shadow-lg flex flex-col justify-end items-center p-1"
                 style={{
                   height: 0,
                   opacity: 0.9,
